@@ -94,6 +94,10 @@
     <button class="wide" id="btnHost">Start a game</button>
   </div>
   <div class="card">
+    <button class="wide alt" id="btnSim">🤖 Play vs Computer</button>
+    <p class="tip">Practice match · 2 rounds</p>
+  </div>
+  <div class="card">
     <input id="codeIn" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false">
     <button class="wide alt" id="btnJoin">Join game</button>
   </div>
@@ -137,8 +141,8 @@
 <!-- END -->
 <section id="end" class="screen">
   <div class="big" id="endEmoji">🏆</div>
-  <h1 id="endTitle" style="margin-top:0">You win!</h1>
-  <p class="stats" id="endStats"></p>
+  <h1 id="endTitle" style="margin-top:0;font-size:32px;text-align:center">You win!</h1>
+  <p class="stats" id="endStats" style="text-align:center;margin:0"></p>
   <div class="grid small" id="endGrid"></div>
   <button class="wide" id="btnRematch">Rematch</button>
   <p class="tip" id="rematchMsg"></p>
@@ -163,6 +167,10 @@ const $ = id => document.getElementById(id);
 const buzz = p => { try { navigator.vibrate && navigator.vibrate(p); } catch(e){} };
 
 let peer = null, conn = null, isHost = false, code = '', round = 1;
+let ai = null, score = {me:0, ai:0};
+const SIM_ROUNDS = 2;
+const rand = n => Math.floor(Math.random()*n);
+const oppName = () => ai ? 'Computer' : 'Opponent';
 let S;
 
 /* ---------- screens ---------- */
@@ -278,8 +286,9 @@ function renderPlace(){
   const all = S.ships.every(s => s.cells);
   $('btnReady').disabled = !all || S.meReady;
   $('btnReady').textContent = S.meReady ? 'Waiting for opponent…' : 'Ready!';
-  $('placeStatus').textContent = S.meReady ? (S.oppReady ? 'Starting…' : 'Waiting for opponent to finish')
-    : (S.oppReady ? 'Opponent is ready — your move!' : 'Place your ships');
+  const lead = ai ? `Round ${round} of ${SIM_ROUNDS} · ` : '';
+  $('placeStatus').textContent = lead + (S.meReady ? (S.oppReady ? 'Starting…' : 'Waiting for opponent to finish')
+    : (S.oppReady ? (ai ? 'place your ships' : 'Opponent is ready — your move!') : 'Place your ships'));
   $('placeStatus').className = 'status ' + (S.oppReady && !S.meReady ? 'go' : 'wait');
   ['btnRotate','btnRandom','btnClear'].forEach(b => $(b).disabled = S.meReady);
 }
@@ -315,6 +324,7 @@ function maybeStart(){
   renderBattle();
   show('battle');
   buzz([30,60,30]);
+  if (ai && !S.myTurn) ai.takeTurn();
 }
 function renderBattle(){
   const tg = $('targetGrid');
@@ -332,7 +342,7 @@ function renderBattle(){
   const st = $('turnStatus');
   if (S.waiting){ st.textContent = 'Firing…'; st.className = 'status wait'; }
   else if (S.myTurn){ st.textContent = 'Your turn — tap to fire!'; st.className = 'status go'; }
-  else { st.textContent = "Opponent's turn…"; st.className = 'status wait'; }
+  else { st.textContent = oppName() + "'s turn…"; st.className = 'status wait'; }
 }
 function renderHome(g){
   for (let r = 0; r < N; r++) for (let c = 0; c < N; c++){
@@ -401,11 +411,24 @@ function finish(won){
   buildGrid($('endGrid')); renderHome($('endGrid'));
   $('btnRematch').disabled = false; $('btnRematch').textContent = 'Rematch';
   $('rematchMsg').textContent = '';
+  if (ai){
+    won ? score.me++ : score.ai++;
+    const last = round >= SIM_ROUNDS;
+    $('endTitle').textContent = `Round ${round}: ` + (won ? 'You win!' : 'Computer wins');
+    $('endStats').textContent += ` · Match: You ${score.me} – ${score.ai} Computer`;
+    if (last){
+      const d = score.me - score.ai;
+      $('endEmoji').textContent = d > 0 ? '🏆' : d < 0 ? '🤖' : '🤝';
+      $('endTitle').textContent = d > 0 ? 'You win the match!' : d < 0 ? 'Computer wins the match' : "Match tied!";
+    }
+    $('btnRematch').textContent = last ? 'Play again' : `Start round ${round + 1}`;
+  }
   buzz(won ? [100,50,100,50,300] : 300);
   setTimeout(() => show('end'), 700);
 }
 $('btnRematch').onclick = () => {
   if (S.wantRematch) return;
+  if (ai && round >= SIM_ROUNDS){ round = 0; score = {me:0, ai:0}; }
   S.wantRematch = true; send({t:'rematch'});
   $('btnRematch').disabled = true; $('btnRematch').textContent = 'Waiting for opponent…';
   maybeRematch();
@@ -415,7 +438,90 @@ function maybeRematch(){
 }
 
 /* ---------- networking (PeerJS / WebRTC) ---------- */
-function send(m){ if (conn && conn.open) conn.send(m); }
+function send(m){
+  if (ai) { ai.receive(m); return; }
+  if (conn && conn.open) conn.send(m);
+}
+
+/* ---------- computer opponent (simulator) ---------- */
+function makeAI(){
+  const A = {};
+  const unk = (r,c) => r>=0 && c>=0 && r<N && c<N && A.known[r][c] === 0;
+  const k = (r,c) => (A.known[r] || [])[c];
+  const deliver = m => setTimeout(() => { if (ai === A) onMessage(m); }, 250);
+  function newBoard(){
+    A.grid = blank(-1);
+    A.ships = FLEET.map(f => ({name:f.name, len:f.len, cells:null, hits:0}));
+    A.ships.forEach((s, i) => {
+      for (;;){
+        const cells = cellsFor(s.len, rand(N), rand(N), Math.random() < .5);
+        if (cells.every(([r,c]) => r<N && c<N && A.grid[r][c] === -1)){
+          s.cells = cells; cells.forEach(([r,c]) => A.grid[r][c] = i); break;
+        }
+      }
+    });
+    A.known = blank(0);   // my view of the player's board: 0 ?, 1 miss, 2 hit, 3 sunk
+    A.hitOnMe = blank(false);
+  }
+  function pick(){
+    const hits = [];
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (A.known[r][c] === 2) hits.push([r,c]);
+    if (hits.length){
+      const line = [], adj = [];
+      hits.forEach(([r,c]) => {
+        for (const [dr,dc] of [[0,1],[1,0]]){
+          if (k(r+dr,c+dc) === 2 || k(r-dr,c-dc) === 2){
+            let rr = r, cc = c; while (k(rr,cc) === 2){ rr += dr; cc += dc; } if (unk(rr,cc)) line.push([rr,cc]);
+            rr = r; cc = c;     while (k(rr,cc) === 2){ rr -= dr; cc -= dc; } if (unk(rr,cc)) line.push([rr,cc]);
+          }
+        }
+        for (const [dr,dc] of [[0,1],[1,0],[0,-1],[-1,0]]) if (unk(r+dr,c+dc)) adj.push([r+dr,c+dc]);
+      });
+      const pool = line.length ? line : adj;
+      if (pool.length) return pool[rand(pool.length)];
+    }
+    const par = [], any = [];
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) if (unk(r,c)){
+      any.push([r,c]); if ((r + c) % 2 === 0) par.push([r,c]);
+    }
+    const pool = par.length ? par : any;
+    return pool[rand(pool.length)];
+  }
+  A.start = () => { newBoard(); deliver({t:'ready'}); };
+  A.takeTurn = () => setTimeout(() => {
+    if (ai !== A || S.over || S.myTurn || !$('battle').classList.contains('on')) return;
+    const [r,c] = pick();
+    onMessage({t:'fire', r, c});
+  }, 650 + Math.random()*550);
+  A.receive = m => {
+    if (m.t === 'fire'){
+      if (A.hitOnMe[m.r][m.c]) return;
+      A.hitOnMe[m.r][m.c] = true;
+      const i = A.grid[m.r][m.c];
+      let hit = false, sunk = null;
+      if (i >= 0){
+        hit = true; const s = A.ships[i]; s.hits++;
+        if (s.hits >= s.len) sunk = {name:s.name, cells:s.cells};
+      }
+      const over = A.ships.every(s => s.hits >= s.len);
+      deliver({t:'result', r:m.r, c:m.c, hit, sunk, over});
+      if (!over) A.takeTurn();
+    } else if (m.t === 'result'){
+      A.known[m.r][m.c] = m.hit ? 2 : 1;
+      if (m.sunk) m.sunk.cells.forEach(([r,c]) => A.known[r][c] = 3);
+    } else if (m.t === 'rematch'){
+      newBoard(); deliver({t:'rematch'}); deliver({t:'ready'});
+    }
+  };
+  return A;
+}
+function startSim(){
+  teardown(); hideBanner();
+  isHost = true; round = 1; score = {me:0, ai:0};
+  ai = makeAI();
+  startPlacement();
+  ai.start();
+}
 function onMessage(m){
   if (!m || !m.t) return;
   switch (m.t){
@@ -496,6 +602,7 @@ function join(raw){
   });
 }
 function teardown(){
+  ai = null;
   const c = conn; conn = null;
   try { c && c.close(); } catch(e){}
   try { peer && peer.destroy(); } catch(e){}
@@ -509,6 +616,7 @@ function goHome(){
 }
 
 $('btnHost').onclick = () => host();
+$('btnSim').onclick = startSim;
 $('btnJoin').onclick = () => join($('codeIn').value);
 $('codeIn').addEventListener('keydown', e => { if (e.key === 'Enter') join($('codeIn').value); });
 $('codeIn').addEventListener('input', e => {
