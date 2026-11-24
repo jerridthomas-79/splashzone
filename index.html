@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#0b1d33">
+<title>Splash Zone — Battleship</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  :root{
+    --bg:#0b1d33; --panel:#12294a; --water:#1d4f80; --water2:#245c94; --line:#0e2a4a;
+    --ship:#8b9bb0; --sel:#ffd166; --hit:#ef476f; --sunk:#8c1c3a; --miss:#e6eef7;
+    --text:#eef4fb; --muted:#9db4cf; --accent:#06d6a0;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
+    touch-action:manipulation;-webkit-user-select:none;user-select:none;overscroll-behavior:none}
+  body{padding:env(safe-area-inset-top) 12px env(safe-area-inset-bottom)}
+  .screen{display:none;flex-direction:column;align-items:center;gap:14px;max-width:460px;margin:0 auto;padding:16px 0 24px}
+  .screen.on{display:flex}
+  h1{font-size:40px;margin:28px 0 0;letter-spacing:1px}
+  h1 span{color:var(--accent)}
+  h2{font-size:18px;margin:4px 0 0;color:var(--muted);font-weight:600}
+  .sub{color:var(--muted);text-align:center;font-size:15px;line-height:1.4;margin:0}
+  button{font:inherit;font-weight:700;border:0;border-radius:14px;padding:14px 18px;
+    background:var(--accent);color:#04241b;font-size:17px;cursor:pointer;touch-action:manipulation}
+  button{white-space:nowrap}
+  button.alt{background:var(--panel);color:var(--text);border:1px solid #2b4c78}
+  button:disabled{opacity:.4}
+  .wide{width:100%}
+  .row{display:flex;gap:10px;width:100%}
+  .row>*{flex:1}
+  input{font:inherit;font-size:28px;letter-spacing:8px;text-align:center;text-transform:uppercase;
+    padding:12px;border-radius:14px;border:1px solid #2b4c78;background:var(--panel);color:var(--text);width:100%}
+  .code{font-size:56px;font-weight:800;letter-spacing:10px;color:var(--sel);margin:6px 0}
+  .card{background:var(--panel);border-radius:18px;padding:18px;width:100%;display:flex;flex-direction:column;gap:12px;align-items:center}
+  .spinner{width:28px;height:28px;border:3px solid #2b4c78;border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .status{width:100%;text-align:center;font-weight:800;font-size:20px;padding:12px;border-radius:14px;background:var(--panel)}
+  .status.go{background:var(--accent);color:#04241b}
+  .status.wait{background:var(--panel);color:var(--muted)}
+  .label{align-self:flex-start;font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:-8px}
+
+  .grid{display:grid;grid-template-columns:repeat(10,1fr);grid-template-rows:repeat(10,1fr);gap:2px;background:var(--line);
+    padding:2px;border-radius:10px;width:min(94vw,440px);aspect-ratio:1}
+  .grid.small{width:min(62vw,270px)}
+  .cell{background:var(--water);border-radius:3px;position:relative;min-width:0;min-height:0;overflow:hidden;display:flex;align-items:center;justify-content:center}
+  .cell:nth-child(odd){background:var(--water2)}
+  .grid.target .cell.open{cursor:pointer}
+  .grid.target.active .cell.open:active{background:var(--sel)}
+  .cell.ship{background:var(--ship)}
+  .cell.sel{background:var(--sel)}
+  .cell.miss::after{content:"";width:28%;height:28%;border-radius:50%;background:var(--miss);opacity:.85}
+  .cell.hit{background:var(--hit)}
+  .cell.hit::after{content:"";width:40%;height:40%;border-radius:50%;background:#fff3;}
+  .cell.sunk{background:var(--sunk)}
+  .cell.sunk::after{content:"✕";color:#ffb3c4;font-weight:900;font-size:min(3.2vw,15px)}
+  .cell.ship.hit{background:var(--hit)}
+  .cell.ship.sunk{background:var(--sunk)}
+  .cell.boom{animation:boom .45s ease-out}
+  @keyframes boom{0%{transform:scale(1.5);filter:brightness(2)}100%{transform:scale(1)}}
+
+  .fleet{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;width:100%}
+  .chip{padding:8px 12px;border-radius:999px;background:var(--panel);border:1px solid #2b4c78;font-size:14px;font-weight:700;display:flex;gap:6px;align-items:center}
+  .chip .pips{display:flex;gap:2px}
+  .chip .pips i{width:8px;height:8px;background:var(--ship);border-radius:2px;display:block}
+  .chip.cur{border-color:var(--sel);color:var(--sel)}
+  .chip.cur .pips i{background:var(--sel)}
+  .chip.done{opacity:.55}
+  .chip.dead{text-decoration:line-through;opacity:.5}
+  .chip.dead .pips i{background:var(--hit)}
+  .tip{font-size:13px;color:var(--muted);text-align:center;margin:0}
+
+  .banner{position:fixed;left:12px;right:12px;bottom:calc(16px + env(safe-area-inset-bottom));max-width:440px;margin:0 auto;
+    background:#3a1020;border:1px solid var(--hit);border-radius:14px;padding:14px;display:none;gap:10px;align-items:center;justify-content:space-between;z-index:5}
+  .banner.on{display:flex}
+  .banner button{padding:10px 14px;font-size:15px}
+  .big{font-size:64px;margin:20px 0 0}
+  .stats{color:var(--muted);font-size:15px}
+</style>
+</head>
+<body>
+
+<!-- HOME -->
+<section id="home" class="screen on">
+  <h1>Splash <span>Zone</span></h1>
+  <h2>Two-player Battleship</h2>
+  <p class="sub">One phone starts a game and gets a code.<br>The other phone types the code to join.</p>
+  <div class="card">
+    <button class="wide" id="btnHost">Start a game</button>
+  </div>
+  <div class="card">
+    <input id="codeIn" maxlength="4" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false">
+    <button class="wide alt" id="btnJoin">Join game</button>
+  </div>
+  <p class="tip" id="homeMsg"></p>
+</section>
+
+<!-- LOBBY -->
+<section id="lobby" class="screen">
+  <h2 id="lobbyTitle">Your game code</h2>
+  <div class="code" id="codeOut">····</div>
+  <div class="spinner"></div>
+  <p class="sub" id="lobbyMsg">Waiting for the other player to join…</p>
+  <button class="wide alt" id="btnShare">Share invite link</button>
+  <button class="wide alt" id="btnCancel">Cancel</button>
+</section>
+
+<!-- PLACEMENT -->
+<section id="place" class="screen">
+  <div class="status wait" id="placeStatus">Place your ships</div>
+  <div class="fleet" id="placeFleet"></div>
+  <div class="grid" id="placeGrid"></div>
+  <p class="tip">Tap water to drop the highlighted ship. Tap a ship to pick it, tap it again to turn it.</p>
+  <div class="row">
+    <button class="alt" id="btnRotate">↻ Turn</button>
+    <button class="alt" id="btnRandom">🎲 Random</button>
+    <button class="alt" id="btnClear">Clear</button>
+  </div>
+  <button class="wide" id="btnReady" disabled>Ready!</button>
+</section>
+
+<!-- BATTLE -->
+<section id="battle" class="screen">
+  <div class="status" id="turnStatus">…</div>
+  <div class="label">Enemy waters</div>
+  <div class="grid target" id="targetGrid"></div>
+  <div class="fleet" id="enemyFleet"></div>
+  <div class="label">Your fleet</div>
+  <div class="grid small" id="homeGrid"></div>
+</section>
+
+<!-- END -->
+<section id="end" class="screen">
+  <div class="big" id="endEmoji">🏆</div>
+  <h1 id="endTitle" style="margin-top:0">You win!</h1>
+  <p class="stats" id="endStats"></p>
+  <div class="grid small" id="endGrid"></div>
+  <button class="wide" id="btnRematch">Rematch</button>
+  <p class="tip" id="rematchMsg"></p>
+  <button class="wide alt" id="btnHome">Leave game</button>
+</section>
+
+<div class="banner" id="banner">
+  <span id="bannerMsg">Opponent disconnected</span>
+  <button id="bannerBtn">Home</button>
+</div>
+
+<script>
+(() => {
+const N = 10;
+const FLEET = [
+  {name:'Carrier',len:5},{name:'Battleship',len:4},{name:'Cruiser',len:3},
+  {name:'Submarine',len:3},{name:'Destroyer',len:2}
+];
+const ALPHA = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+const PREFIX = 'splashzone-bship-';
+const $ = id => document.getElementById(id);
+const buzz = p => { try { navigator.vibrate && navigator.vibrate(p); } catch(e){} };
+
+let peer = null, conn = null, isHost = false, code = '', round = 1;
+let S;
+
+/* ---------- screens ---------- */
+function show(id){
+  document.querySelectorAll('.screen').forEach(s => s.classList.toggle('on', s.id === id));
+  window.scrollTo(0,0);
+}
+function banner(msg){ $('bannerMsg').textContent = msg; $('banner').classList.add('on'); }
+function hideBanner(){ $('banner').classList.remove('on'); }
+
+/* ---------- state ---------- */
+const blank = v => Array.from({length:N}, () => Array(N).fill(v));
+function newRound(){
+  S = {
+    ships: FLEET.map(f => ({name:f.name, len:f.len, cells:null, horiz:true, hits:0})),
+    grid: blank(-1),        // my board: ship index or -1
+    incoming: blank(0),     // shots on me: 0 none, 1 miss, 2 hit
+    target: blank(0),       // my shots: 0 unknown, 1 miss, 2 hit, 3 sunk
+    enemySunk: [], sel: 0,
+    meReady:false, oppReady:false, myTurn:false, waiting:false, over:false,
+    wantRematch:false, oppRematch:false, shots:0, hits:0, last:null
+  };
+}
+
+/* ---------- grids ---------- */
+function buildGrid(el, onTap){
+  el.innerHTML = '';
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++){
+    const d = document.createElement('div');
+    d.className = 'cell'; d.dataset.r = r; d.dataset.c = c;
+    el.appendChild(d);
+  }
+  if (onTap) el.onclick = e => {
+    const t = e.target.closest('.cell'); if (!t) return;
+    onTap(+t.dataset.r, +t.dataset.c);
+  };
+}
+const cellOf = (el, r, c) => el.children[r*N + c];
+
+/* ---------- placement ---------- */
+function cellsFor(len, r, c, h){
+  const out = [];
+  for (let k = 0; k < len; k++) out.push(h ? [r, c+k] : [r+k, c]);
+  return out;
+}
+function fits(i, cells){
+  return cells.every(([r,c]) => r>=0 && c>=0 && r<N && c<N && (S.grid[r][c] === -1 || S.grid[r][c] === i));
+}
+function removeShip(i){
+  const s = S.ships[i];
+  if (s.cells) s.cells.forEach(([r,c]) => S.grid[r][c] = -1);
+  s.cells = null;
+}
+function putShip(i, cells, h){
+  removeShip(i);
+  const s = S.ships[i]; s.cells = cells; s.horiz = h;
+  cells.forEach(([r,c]) => S.grid[r][c] = i);
+}
+// try to place ship i so it covers (r,c), sliding it back if it runs off the edge
+function tryPlace(i, r, c, h){
+  const len = S.ships[i].len;
+  for (let off = 0; off < len; off++){
+    const cells = h ? cellsFor(len, r, c-off, h) : cellsFor(len, r-off, c, h);
+    if (fits(i, cells)){ putShip(i, cells, h); return true; }
+  }
+  return false;
+}
+function rotateSel(){
+  const s = S.ships[S.sel];
+  if (!s.cells){ s.horiz = !s.horiz; renderPlace(); return; }
+  const [r,c] = s.cells[0];
+  if (!tryPlace(S.sel, r, c, !s.horiz)) buzz(40);
+  renderPlace();
+}
+function placeTap(r, c){
+  const at = S.grid[r][c];
+  if (at >= 0){
+    if (at === S.sel) rotateSel();
+    else { S.sel = at; renderPlace(); }
+    return;
+  }
+  const s = S.ships[S.sel];
+  if (tryPlace(S.sel, r, c, s.horiz) || tryPlace(S.sel, r, c, !s.horiz)){
+    buzz(10);
+    const next = S.ships.findIndex(x => !x.cells);
+    if (next >= 0) S.sel = next;
+  } else buzz(40);
+  renderPlace();
+}
+function randomFleet(){
+  S.grid = blank(-1);
+  S.ships.forEach(s => s.cells = null);
+  S.ships.forEach((s, i) => {
+    for (let tries = 0; tries < 500; tries++){
+      const h = Math.random() < .5;
+      const r = Math.floor(Math.random()*N), c = Math.floor(Math.random()*N);
+      const cells = cellsFor(s.len, r, c, h);
+      if (fits(i, cells)){ putShip(i, cells, h); break; }
+    }
+  });
+  S.sel = 0;
+  renderPlace();
+}
+function renderPlace(){
+  const g = $('placeGrid');
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++){
+    const i = S.grid[r][c];
+    cellOf(g, r, c).className = 'cell' + (i >= 0 ? (i === S.sel ? ' sel' : ' ship') : '');
+  }
+  $('placeFleet').innerHTML = S.ships.map((s, i) =>
+    `<div class="chip ${i===S.sel?'cur':''} ${s.cells?'done':''}" data-i="${i}">${s.name}<span class="pips">${'<i></i>'.repeat(s.len)}</span></div>`
+  ).join('');
+  const all = S.ships.every(s => s.cells);
+  $('btnReady').disabled = !all || S.meReady;
+  $('btnReady').textContent = S.meReady ? 'Waiting for opponent…' : 'Ready!';
+  $('placeStatus').textContent = S.meReady ? (S.oppReady ? 'Starting…' : 'Waiting for opponent to finish')
+    : (S.oppReady ? 'Opponent is ready — your move!' : 'Place your ships');
+  $('placeStatus').className = 'status ' + (S.oppReady && !S.meReady ? 'go' : 'wait');
+  ['btnRotate','btnRandom','btnClear'].forEach(b => $(b).disabled = S.meReady);
+}
+$('placeFleet').onclick = e => {
+  const t = e.target.closest('.chip'); if (!t || S.meReady) return;
+  S.sel = +t.dataset.i; renderPlace();
+};
+$('btnRotate').onclick = () => { if (!S.meReady) rotateSel(); };
+$('btnRandom').onclick = () => { if (!S.meReady) randomFleet(); };
+$('btnClear').onclick = () => {
+  if (S.meReady) return;
+  S.grid = blank(-1); S.ships.forEach(s => s.cells = null); S.sel = 0; renderPlace();
+};
+$('btnReady').onclick = () => {
+  if (!S.ships.every(s => s.cells) || S.meReady) return;
+  S.meReady = true; send({t:'ready'}); renderPlace(); maybeStart();
+};
+
+function startPlacement(){
+  newRound();
+  buildGrid($('placeGrid'), (r,c) => { if (!S.meReady) placeTap(r,c); });
+  renderPlace();
+  show('place');
+}
+
+/* ---------- battle ---------- */
+function maybeStart(){
+  if (!(S.meReady && S.oppReady)) { renderPlace(); return; }
+  const hostFirst = round % 2 === 1;
+  S.myTurn = (isHost === hostFirst);
+  buildGrid($('targetGrid'), fireAt);
+  buildGrid($('homeGrid'));
+  renderBattle();
+  show('battle');
+  buzz([30,60,30]);
+}
+function renderBattle(){
+  const tg = $('targetGrid');
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++){
+    const v = S.target[r][c];
+    const el = cellOf(tg, r, c);
+    const boom = S.last && S.last[0] === r && S.last[1] === c ? ' boom' : '';
+    el.className = 'cell' + (v===0?' open':v===1?' miss':v===2?' hit':' sunk') + boom;
+  }
+  tg.classList.toggle('active', S.myTurn && !S.waiting && !S.over);
+  renderHome($('homeGrid'));
+  $('enemyFleet').innerHTML = FLEET.map(f =>
+    `<div class="chip ${S.enemySunk.includes(f.name)?'dead':''}">${f.name}<span class="pips">${'<i></i>'.repeat(f.len)}</span></div>`
+  ).join('');
+  const st = $('turnStatus');
+  if (S.waiting){ st.textContent = 'Firing…'; st.className = 'status wait'; }
+  else if (S.myTurn){ st.textContent = 'Your turn — tap to fire!'; st.className = 'status go'; }
+  else { st.textContent = "Opponent's turn…"; st.className = 'status wait'; }
+}
+function renderHome(g){
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++){
+    const i = S.grid[r][c], hit = S.incoming[r][c];
+    let cls = 'cell';
+    if (i >= 0){
+      cls += ' ship';
+      if (hit === 2) cls += S.ships[i].hits >= S.ships[i].len ? ' sunk' : ' hit';
+    } else if (hit === 1) cls += ' miss';
+    cellOf(g, r, c).className = cls;
+  }
+}
+function fireAt(r, c){
+  if (!S.myTurn || S.waiting || S.over || S.target[r][c] !== 0) return;
+  S.waiting = true; S.shots++;
+  send({t:'fire', r, c});
+  buzz(15);
+  renderBattle();
+}
+function onFire(r, c){
+  if (S.myTurn || S.over || S.incoming[r][c]) return;
+  const i = S.grid[r][c];
+  let hit = false, sunk = null;
+  if (i >= 0){
+    hit = true; S.incoming[r][c] = 2;
+    const s = S.ships[i]; s.hits++;
+    if (s.hits >= s.len) sunk = {name:s.name, cells:s.cells};
+    buzz(sunk ? [80,40,80] : 60);
+  } else S.incoming[r][c] = 1;
+  const over = S.ships.every(s => s.hits >= s.len);
+  send({t:'result', r, c, hit, sunk, over});
+  if (over) return finish(false);
+  S.myTurn = true;
+  renderBattle();
+}
+function onResult(m){
+  if (!S.waiting) return;
+  S.waiting = false;
+  S.target[m.r][m.c] = m.hit ? 2 : 1;
+  S.last = [m.r, m.c];
+  if (m.hit) S.hits++;
+  if (m.sunk){
+    m.sunk.cells.forEach(([r,c]) => S.target[r][c] = 3);
+    S.enemySunk.push(m.sunk.name);
+    buzz([40,30,40,30,120]);
+  } else if (m.hit) buzz(40);
+  if (m.over) return finish(true);
+  S.myTurn = false;
+  renderBattle();
+  if (m.sunk) flashStatus(`You sank their ${m.sunk.name}!`);
+  else flashStatus(m.hit ? 'Hit!' : 'Miss');
+}
+function flashStatus(txt){
+  const st = $('turnStatus');
+  st.textContent = txt;
+  st.className = 'status ' + (txt === 'Miss' ? 'wait' : 'go');
+  clearTimeout(flashStatus.t);
+  flashStatus.t = setTimeout(() => { if ($('battle').classList.contains('on')) renderBattle(); }, 1200);
+}
+function finish(won){
+  S.over = true;
+  $('endEmoji').textContent = won ? '🏆' : '🌊';
+  $('endTitle').textContent = won ? 'You win!' : 'You lost';
+  const acc = S.shots ? Math.round(100 * S.hits / S.shots) : 0;
+  $('endStats').textContent = `${S.shots} shots · ${S.hits} hits · ${acc}% accuracy`;
+  buildGrid($('endGrid')); renderHome($('endGrid'));
+  $('btnRematch').disabled = false; $('btnRematch').textContent = 'Rematch';
+  $('rematchMsg').textContent = '';
+  buzz(won ? [100,50,100,50,300] : 300);
+  setTimeout(() => show('end'), 700);
+}
+$('btnRematch').onclick = () => {
+  if (S.wantRematch) return;
+  S.wantRematch = true; send({t:'rematch'});
+  $('btnRematch').disabled = true; $('btnRematch').textContent = 'Waiting for opponent…';
+  maybeRematch();
+};
+function maybeRematch(){
+  if (S.wantRematch && S.oppRematch){ round++; startPlacement(); }
+}
+
+/* ---------- networking (PeerJS / WebRTC) ---------- */
+function send(m){ if (conn && conn.open) conn.send(m); }
+function onMessage(m){
+  if (!m || !m.t) return;
+  switch (m.t){
+    case 'ready': S.oppReady = true; maybeStart(); break;
+    case 'fire': onFire(m.r, m.c); break;
+    case 'result': onResult(m); break;
+    case 'rematch':
+      S.oppRematch = true;
+      if (!S.wantRematch) $('rematchMsg').textContent = 'Opponent wants a rematch!';
+      maybeRematch(); break;
+  }
+}
+function wire(c){
+  conn = c;
+  conn.on('open', () => {
+    hideBanner();
+    round = 1;
+    startPlacement();
+  });
+  conn.on('data', onMessage);
+  conn.on('close', () => { if (conn === c) banner('Opponent left the game'); });
+  conn.on('error', () => banner('Connection problem'));
+}
+function makeCode(){
+  let s = ''; for (let i = 0; i < 4; i++) s += ALPHA[Math.floor(Math.random()*ALPHA.length)];
+  return s;
+}
+function peerId(c){ return PREFIX + c.toLowerCase(); }
+function noPeerLib(){
+  if (window.Peer) return false;
+  $('homeMsg').textContent = "Couldn't load the connection library. Check your internet and reload.";
+  return true;
+}
+
+function host(attempt = 0){
+  if (noPeerLib()) return;
+  teardown();
+  isHost = true; code = makeCode();
+  $('codeOut').textContent = '····';
+  $('lobbyTitle').textContent = 'Your game code';
+  $('lobbyMsg').textContent = 'Setting up…';
+  $('btnShare').style.display = '';
+  show('lobby');
+  peer = new Peer(peerId(code));
+  peer.on('open', () => {
+    $('codeOut').textContent = code;
+    $('lobbyMsg').textContent = 'Have the other player tap “Join game” and enter this code.';
+  });
+  peer.on('connection', c => {
+    if (conn && conn.open){ c.on('open', () => c.close()); return; }
+    wire(c);
+  });
+  peer.on('disconnected', () => { try { peer.reconnect(); } catch(e){} });
+  peer.on('error', err => {
+    if (err.type === 'unavailable-id' && attempt < 5) return host(attempt + 1);
+    $('lobbyMsg').textContent = 'Connection error: ' + (err.type || err.message);
+  });
+}
+function join(raw){
+  if (noPeerLib()) return;
+  const c = (raw || '').trim().toUpperCase();
+  if (c.length !== 4){ $('homeMsg').textContent = 'Enter the 4-letter code from the other phone.'; return; }
+  teardown();
+  isHost = false; code = c;
+  $('lobbyTitle').textContent = 'Joining game';
+  $('codeOut').textContent = code;
+  $('lobbyMsg').textContent = 'Connecting…';
+  $('btnShare').style.display = 'none';
+  show('lobby');
+  peer = new Peer();
+  peer.on('open', () => wire(peer.connect(peerId(code), {reliable:true})));
+  peer.on('error', err => {
+    if (conn && conn.open){ banner('Connection problem'); return; }
+    teardown(); show('home');
+    $('homeMsg').textContent = err.type === 'peer-unavailable'
+      ? `No game found with code ${code}. Double-check it.`
+      : 'Connection error: ' + (err.type || err.message);
+  });
+}
+function teardown(){
+  const c = conn; conn = null;
+  try { c && c.close(); } catch(e){}
+  try { peer && peer.destroy(); } catch(e){}
+  peer = null;
+}
+function goHome(){
+  teardown(); hideBanner();
+  history.replaceState(null, '', location.pathname);
+  $('homeMsg').textContent = '';
+  show('home');
+}
+
+$('btnHost').onclick = () => host();
+$('btnJoin').onclick = () => join($('codeIn').value);
+$('codeIn').addEventListener('keydown', e => { if (e.key === 'Enter') join($('codeIn').value); });
+$('codeIn').addEventListener('input', e => {
+  e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4);
+});
+$('btnCancel').onclick = goHome;
+$('btnHome').onclick = goHome;
+$('bannerBtn').onclick = goHome;
+$('btnShare').onclick = async () => {
+  if (!code) return;
+  const url = location.origin + location.pathname + '?join=' + code;
+  const text = `Play Battleship with me! Code: ${code}`;
+  try {
+    if (navigator.share) await navigator.share({title:'Splash Zone', text, url});
+    else { await navigator.clipboard.writeText(url); $('btnShare').textContent = 'Link copied!'; }
+  } catch(e){}
+};
+
+// prevent pinch zoom on iOS (double-tap zoom is off via touch-action: manipulation)
+document.addEventListener('gesturestart', e => e.preventDefault());
+
+// auto-join from invite link
+const q = new URLSearchParams(location.search).get('join');
+newRound();
+if (q){ $('codeIn').value = q.toUpperCase().slice(0,4); join(q); }
+})();
+</script>
+</body>
+</html>
